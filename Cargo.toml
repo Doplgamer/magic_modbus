@@ -1,0 +1,62 @@
+[package]
+name = "magic_modbus"
+version = "0.1.0"
+edition = "2024"
+authors = ["Isaac Schlaegel"]
+description = "A TUI tool written in Rust to make working with Modbus simple and easy"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/yourusername/magic_modbus"
+homepage = "https://github.com/yourusername/magic_modbus"
+keywords = ["cli", "tui", "modbus", "utility"]
+categories = ["command-line-utilities"]
+rust-version = "1.85.1"
+include = [
+    "src/**/*",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE*"
+]
+exclude = [
+    "src/examples/*"
+]
+
+[dependencies]
+# CLI
+#clap = "4.5.41"
+
+# TUI
+crossterm = { version = "0.29.0", features = ["event-stream"] }
+ratatui = "0.30.0-alpha.5"
+
+# Enum handling TODO - Remove this eventually
+strum = "0.27.2"
+
+# Error handling
+color-eyre = "0.6.5"
+
+# Asyc
+tokio = { version = "1.47.1", features = ["full"] }
+tokio-util = "0.7.16"
+tokio-modbus = "0.16.1"
+futures = "0.3.31"
+
+# Logging
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
+
+# Serialization
+#serde = "1.0.219"
+#serde_json = "1.0.143"
+
+[[bin]]
+name = "magic_modbus"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+[badges]
+maintenance = { status = "actively-developed" }

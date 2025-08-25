@@ -1,0 +1,44 @@
+# Rust
+/target
+**/*.rs.bk
+*.pdb
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Editor backups
+*~
+.#*
+\#*#
+.*.swp
+.*.swo
+
+# Local environment
+.env
+.env.local
+
+# Cargo documentation
+/doc/
+
+# Cargo.lock should be ignored for libraries but committed for binaries
+# Since this is an application, we'll keep Cargo.lock
