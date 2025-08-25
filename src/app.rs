@@ -26,7 +26,7 @@ use ratatui::widgets::{
 };
 use ratatui::{
     DefaultTerminal, Frame,
-    crossterm::event::{Event, EventStream, KeyCode, KeyModifiers},
+    crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
@@ -497,320 +497,322 @@ impl App {
 
     async fn on_crossterm_event(&mut self, event: Event) -> Result<()> {
         if let Event::Key(key) = event {
-            let shift_pressed = key.modifiers.contains(KeyModifiers::SHIFT);
-            match &self.app_mode {
-                AppMode::Main => {
-                    match self.current_focus {
-                        CurrentFocus::Top => {
-                            match key.code {
-                                KeyCode::Esc => self.exit = true,
-                                KeyCode::Tab => self.current_focus = CurrentFocus::Bottom,
-                                KeyCode::Char('q') => self.previous_top_tab(),
-                                KeyCode::Char('e') => self.next_top_tab(),
-                                KeyCode::Up | KeyCode::Char('w') if shift_pressed => {
-                                    self.table_page_up().await
-                                }
-                                KeyCode::Up | KeyCode::Char('w') => self.table_move_up().await,
-                                KeyCode::Down | KeyCode::Char('s') if shift_pressed => {
-                                    self.table_page_down().await
-                                }
-                                KeyCode::Down | KeyCode::Char('s') => self.table_move_down().await,
-                                KeyCode::Left | KeyCode::Char('a') => self.table_move_left(),
-                                KeyCode::Right | KeyCode::Char('d') => self.table_move_right(),
-                                KeyCode::Char('r') => {
-                                    // Read the values that are currently on the screen
-                                    if let ConnectionStatus::Connected = self.connection_status {
-                                        self.modbus_read_current_page().await;
-                                    } else {
-                                        let _ = self
-                                            .sender
-                                            .send(Action::Error(String::from(
-                                                "Connect to a server first.",
-                                            )))
-                                            .await;
+            if key.kind.is_press() {
+                let shift_pressed = key.modifiers.contains(KeyModifiers::SHIFT);
+                match &self.app_mode {
+                    AppMode::Main => {
+                        match self.current_focus {
+                            CurrentFocus::Top => {
+                                match key.code {
+                                    KeyCode::Esc => self.exit = true,
+                                    KeyCode::Tab => self.current_focus = CurrentFocus::Bottom,
+                                    KeyCode::Char('q') => self.previous_top_tab(),
+                                    KeyCode::Char('e') => self.next_top_tab(),
+                                    KeyCode::Up | KeyCode::Char('w') if shift_pressed => {
+                                        self.table_page_up().await
                                     }
-                                }
-                                KeyCode::Char('R') => {
-                                    self.page_refresh = match self.page_refresh {
-                                        true => false,
-                                        false => true,
+                                    KeyCode::Up | KeyCode::Char('w') => self.table_move_up().await,
+                                    KeyCode::Down | KeyCode::Char('s') if shift_pressed => {
+                                        self.table_page_down().await
                                     }
-                                }
-                                KeyCode::Char('T') => {
-                                    self.tick_refresh = match self.tick_refresh {
-                                        true => false,
-                                        false => true,
+                                    KeyCode::Down | KeyCode::Char('s') => self.table_move_down().await,
+                                    KeyCode::Left | KeyCode::Char('a') => self.table_move_left(),
+                                    KeyCode::Right | KeyCode::Char('d') => self.table_move_right(),
+                                    KeyCode::Char('r') => {
+                                        // Read the values that are currently on the screen
+                                        if let ConnectionStatus::Connected = self.connection_status {
+                                            self.modbus_read_current_page().await;
+                                        } else {
+                                            let _ = self
+                                                .sender
+                                                .send(Action::Error(String::from(
+                                                    "Connect to a server first.",
+                                                )))
+                                                .await;
+                                        }
                                     }
-                                }
-                                KeyCode::Char('u') => {
-                                    if let ConnectionStatus::Connected = self.connection_status {
-                                        self.table_revert_current_cell();
+                                    KeyCode::Char('R') => {
+                                        self.page_refresh = match self.page_refresh {
+                                            true => false,
+                                            false => true,
+                                        }
                                     }
-                                } // Undo (Revert)
-                                KeyCode::Char('g') => {} // TODO Go to address (unfinished)
-                                KeyCode::Enter => {
-                                    if let ConnectionStatus::Connected = self.connection_status {
-                                        self.modbus_apply_queued().await;
-                                    } else {
-                                        let _ = self
-                                            .sender
-                                            .send(Action::Error(String::from(
-                                                "Connect to a server first.",
-                                            )))
-                                            .await;
+                                    KeyCode::Char('T') => {
+                                        self.tick_refresh = match self.tick_refresh {
+                                            true => false,
+                                            false => true,
+                                        }
                                     }
-                                } // Apply
-                                KeyCode::Char(' ') => {
-                                    if let ConnectionStatus::Connected = self.connection_status {
-                                        match self.selected_top_tab {
-                                            SelectedTopTab::Coils => {
-                                                self.table_toggle_current_cell()
+                                    KeyCode::Char('u') => {
+                                        if let ConnectionStatus::Connected = self.connection_status {
+                                            self.table_revert_current_cell();
+                                        }
+                                    } // Undo (Revert)
+                                    KeyCode::Char('g') => {} // TODO Go to address (unfinished)
+                                    KeyCode::Enter => {
+                                        if let ConnectionStatus::Connected = self.connection_status {
+                                            self.modbus_apply_queued().await;
+                                        } else {
+                                            let _ = self
+                                                .sender
+                                                .send(Action::Error(String::from(
+                                                    "Connect to a server first.",
+                                                )))
+                                                .await;
+                                        }
+                                    } // Apply
+                                    KeyCode::Char(' ') => {
+                                        if let ConnectionStatus::Connected = self.connection_status {
+                                            match self.selected_top_tab {
+                                                SelectedTopTab::Coils => {
+                                                    self.table_toggle_current_cell()
+                                                }
+                                                SelectedTopTab::HoldingRegisters => {
+                                                    self.app_mode = AppMode::Popup(PopupType::Edit)
+                                                }
+                                                _ => {}
                                             }
-                                            SelectedTopTab::HoldingRegisters => {
-                                                self.app_mode = AppMode::Popup(PopupType::Edit)
+                                        } else {
+                                            let _ = self
+                                                .sender
+                                                .send(Action::Error(String::from(
+                                                    "Connect to a server first.",
+                                                )))
+                                                .await;
+                                        }
+                                    } // Queue/Toggle
+                                    KeyCode::Char('?') => self.app_mode = AppMode::Help,
+                                    _ => {}
+                                }
+                            }
+                            CurrentFocus::Bottom => {
+                                match key.code {
+                                    KeyCode::Esc => self.exit = true,
+                                    KeyCode::Tab => self.current_focus = CurrentFocus::Top,
+                                    KeyCode::Char('q') => self.previous_bottom_tab(),
+                                    KeyCode::Char('e') => self.next_bottom_tab(),
+                                    KeyCode::Char('?') => self.app_mode = AppMode::Help,
+                                    _ => {}
+                                }
+                                match self.selected_bottom_tab {
+                                    SelectedBottomTab::Connection => match key.code {
+                                        KeyCode::Left | KeyCode::Char('a') => {
+                                            if let SelectedConnectionButton::Disconnect =
+                                                self.selected_connection_button
+                                            {
+                                                self.selected_connection_button =
+                                                    SelectedConnectionButton::NewConnection;
                                             }
-                                            _ => {}
                                         }
-                                    } else {
-                                        let _ = self
-                                            .sender
-                                            .send(Action::Error(String::from(
-                                                "Connect to a server first.",
-                                            )))
-                                            .await;
-                                    }
-                                } // Queue/Toggle
-                                KeyCode::Char('?') => self.app_mode = AppMode::Help,
-                                _ => {}
-                            }
-                        }
-                        CurrentFocus::Bottom => {
-                            match key.code {
-                                KeyCode::Esc => self.exit = true,
-                                KeyCode::Tab => self.current_focus = CurrentFocus::Top,
-                                KeyCode::Char('q') => self.previous_bottom_tab(),
-                                KeyCode::Char('e') => self.next_bottom_tab(),
-                                KeyCode::Char('?') => self.app_mode = AppMode::Help,
-                                _ => {}
-                            }
-                            match self.selected_bottom_tab {
-                                SelectedBottomTab::Connection => match key.code {
-                                    KeyCode::Left | KeyCode::Char('a') => {
-                                        if let SelectedConnectionButton::Disconnect =
-                                            self.selected_connection_button
-                                        {
-                                            self.selected_connection_button =
-                                                SelectedConnectionButton::NewConnection;
+                                        KeyCode::Right | KeyCode::Char('d') => {
+                                            if let SelectedConnectionButton::NewConnection =
+                                                self.selected_connection_button
+                                            {
+                                                self.selected_connection_button =
+                                                    SelectedConnectionButton::Disconnect;
+                                            }
                                         }
-                                    }
-                                    KeyCode::Right | KeyCode::Char('d') => {
-                                        if let SelectedConnectionButton::NewConnection =
-                                            self.selected_connection_button
-                                        {
-                                            self.selected_connection_button =
-                                                SelectedConnectionButton::Disconnect;
-                                        }
-                                    }
-                                    KeyCode::Enter => match self.selected_connection_button {
-                                        SelectedConnectionButton::NewConnection => {
-                                            self.app_mode = AppMode::Popup(PopupType::Connection);
-                                        }
-                                        SelectedConnectionButton::Disconnect => {
-                                            self.sender.send(Action::Disconnect).await?
-                                        }
+                                        KeyCode::Enter => match self.selected_connection_button {
+                                            SelectedConnectionButton::NewConnection => {
+                                                self.app_mode = AppMode::Popup(PopupType::Connection);
+                                            }
+                                            SelectedConnectionButton::Disconnect => {
+                                                self.sender.send(Action::Disconnect).await?
+                                            }
+                                        },
+                                        _ => {}
                                     },
-                                    _ => {}
-                                },
-                                SelectedBottomTab::Queue => match key.code {
-                                    KeyCode::Up => {
-                                        self.queue_select_previous_item();
-                                    }
-                                    KeyCode::Down => {
-                                        self.queue_select_next_item();
-                                    }
-                                    KeyCode::Char('g') => self.table_go_to_cell(
-                                        self.queue_table_data[self.queue_item_index].address,
-                                    ),
-                                    _ => {}
-                                },
-                                SelectedBottomTab::Log => match key.code {
-                                    _ => {}
-                                },
+                                    SelectedBottomTab::Queue => match key.code {
+                                        KeyCode::Up => {
+                                            self.queue_select_previous_item();
+                                        }
+                                        KeyCode::Down => {
+                                            self.queue_select_next_item();
+                                        }
+                                        KeyCode::Char('g') => self.table_go_to_cell(
+                                            self.queue_table_data[self.queue_item_index].address,
+                                        ),
+                                        _ => {}
+                                    },
+                                    SelectedBottomTab::Log => match key.code {
+                                        _ => {}
+                                    },
+                                }
                             }
                         }
                     }
-                }
-                AppMode::Help => match key.code {
-                    KeyCode::Esc => self.exit = true,
-                    KeyCode::Char('?') => self.app_mode = AppMode::Main,
-                    _ => {}
-                },
-                AppMode::Popup(popup) => {
-                    match popup {
-                        PopupType::Connection => match key.code {
-                            KeyCode::Backspace => match self.connecting_popup_field {
-                                ConnectingField::Address => {
-                                    if self.address_input_cursor > 0 {
-                                        self.address_input.remove(self.address_input_cursor - 1);
+                    AppMode::Help => match key.code {
+                        KeyCode::Esc => self.exit = true,
+                        KeyCode::Char('?') => self.app_mode = AppMode::Main,
+                        _ => {}
+                    },
+                    AppMode::Popup(popup) => {
+                        match popup {
+                            PopupType::Connection => match key.code {
+                                KeyCode::Backspace => match self.connecting_popup_field {
+                                    ConnectingField::Address => {
+                                        if self.address_input_cursor > 0 {
+                                            self.address_input.remove(self.address_input_cursor - 1);
+                                            self.address_input_cursor =
+                                                self.address_input_cursor.saturating_sub(1);
+                                        } else {
+                                            self.beep()?;
+                                        }
+                                    }
+                                    ConnectingField::Port => {
+                                        if self.port_input_cursor > 0 {
+                                            self.port_input.remove(self.port_input_cursor - 1);
+                                            self.port_input_cursor =
+                                                self.port_input_cursor.saturating_sub(1);
+                                        } else {
+                                            self.beep()?;
+                                        }
+                                    }
+                                },
+                                KeyCode::Enter => {
+                                    if self.address_input.len() < 2 || self.port_input.len() < 2 {
+                                        self.beep()?;
+                                    }
+
+                                    let address = (self.address_input.as_str().trim().to_owned()
+                                        + ":"
+                                        + self.port_input.as_str().trim())
+                                        .parse::<SocketAddr>();
+
+                                    match address {
+                                        Ok(addr) => {
+                                            self.app_mode = AppMode::Main;
+
+                                            self.address_input = String::from(" ");
+                                            self.address_input_cursor = 0;
+
+                                            self.port_input = String::from(" ");
+                                            self.port_input_cursor = 0;
+
+                                            self.connecting_popup_field = ConnectingField::Address;
+
+                                            self.sender.send(Action::Connect(addr)).await?;
+                                        }
+                                        Err(_) => self.beep()?,
+                                    }
+                                }
+                                KeyCode::Left => match self.connecting_popup_field {
+                                    ConnectingField::Address => {
                                         self.address_input_cursor =
-                                            self.address_input_cursor.saturating_sub(1);
-                                    } else {
-                                        self.beep()?;
+                                            self.address_input_cursor.saturating_sub(1)
                                     }
-                                }
-                                ConnectingField::Port => {
-                                    if self.port_input_cursor > 0 {
-                                        self.port_input.remove(self.port_input_cursor - 1);
+                                    ConnectingField::Port => {
                                         self.port_input_cursor =
-                                            self.port_input_cursor.saturating_sub(1);
-                                    } else {
-                                        self.beep()?;
+                                            self.port_input_cursor.saturating_sub(1)
+                                    }
+                                },
+                                KeyCode::Right => match self.connecting_popup_field {
+                                    ConnectingField::Address => {
+                                        if self.address_input_cursor < self.address_input.len() - 1 {
+                                            self.address_input_cursor =
+                                                self.address_input_cursor.saturating_add(1);
+                                        }
+                                    }
+                                    ConnectingField::Port => {
+                                        if self.port_input_cursor < self.port_input.len() - 1 {
+                                            self.port_input_cursor =
+                                                self.port_input_cursor.saturating_add(1);
+                                        }
+                                    }
+                                },
+                                KeyCode::Up | KeyCode::Down | KeyCode::Tab => {
+                                    self.connecting_popup_field = match self.connecting_popup_field {
+                                        ConnectingField::Address => ConnectingField::Port,
+                                        ConnectingField::Port => ConnectingField::Address,
                                     }
                                 }
+                                KeyCode::Delete => match self.connecting_popup_field {
+                                    ConnectingField::Address => {
+                                        if self.address_input_cursor < self.address_input.len() - 1 {
+                                            self.address_input.remove(self.address_input_cursor);
+                                        } else {
+                                            self.beep()?;
+                                        }
+                                    }
+                                    ConnectingField::Port => {
+                                        if self.address_input_cursor < self.address_input.len() - 1 {
+                                            self.address_input.remove(self.address_input_cursor);
+                                        } else {
+                                            self.beep()?;
+                                        }
+                                    }
+                                },
+                                KeyCode::Char(c) => match self.connecting_popup_field {
+                                    ConnectingField::Address => {
+                                        if self.is_address_char(c) {
+                                            self.address_input.insert(self.address_input_cursor, c);
+                                            self.address_input_cursor =
+                                                self.address_input_cursor.saturating_add(1);
+                                        } else {
+                                            self.beep()?;
+                                        }
+                                    }
+                                    ConnectingField::Port => {
+                                        if c.is_ascii_digit() {
+                                            self.port_input.insert(self.port_input_cursor, c);
+                                            self.port_input_cursor =
+                                                self.port_input_cursor.saturating_add(1);
+                                        } else {
+                                            self.beep()?;
+                                        }
+                                    }
+                                },
+                                KeyCode::Esc => self.exit = true,
+                                _ => {}
                             },
-                            KeyCode::Enter => {
-                                if self.address_input.len() < 2 || self.port_input.len() < 2 {
-                                    self.beep()?;
-                                }
-
-                                let address = (self.address_input.as_str().trim().to_owned()
-                                    + ":"
-                                    + self.port_input.as_str().trim())
-                                .parse::<SocketAddr>();
-
-                                match address {
-                                    Ok(addr) => {
-                                        self.app_mode = AppMode::Main;
-
-                                        self.address_input = String::from(" ");
-                                        self.address_input_cursor = 0;
-
-                                        self.port_input = String::from(" ");
-                                        self.port_input_cursor = 0;
-
-                                        self.connecting_popup_field = ConnectingField::Address;
-
-                                        self.sender.send(Action::Connect(addr)).await?;
+                            PopupType::Edit => match key.code {
+                                KeyCode::Backspace => {
+                                    if self.edit_popup_cursor > 0 {
+                                        self.edit_popup_input.pop();
+                                        self.edit_popup_cursor =
+                                            self.edit_popup_cursor.saturating_sub(1);
+                                    } else {
+                                        self.beep()?;
                                     }
-                                    Err(_) => self.beep()?,
                                 }
-                            }
-                            KeyCode::Left => match self.connecting_popup_field {
-                                ConnectingField::Address => {
-                                    self.address_input_cursor =
-                                        self.address_input_cursor.saturating_sub(1)
+                                KeyCode::Enter => {
+                                    if let Ok(new_value) = self.edit_popup_input.parse::<usize>() {
+                                        if new_value > 65535 {
+                                            self.beep()?;
+                                        } else {
+                                            self.table_queue_current_cell(new_value as u16);
+                                            self.edit_popup_cursor = 0;
+                                            self.edit_popup_input = String::new();
+                                            self.app_mode = AppMode::Main;
+                                        }
+                                    } else {
+                                        self.beep()?;
+                                    }
                                 }
-                                ConnectingField::Port => {
-                                    self.port_input_cursor =
-                                        self.port_input_cursor.saturating_sub(1)
+                                KeyCode::Char(c) => {
+                                    if c.is_ascii_digit() && self.edit_popup_cursor < 5 {
+                                        self.edit_popup_input.push(c);
+                                        self.edit_popup_cursor =
+                                            self.edit_popup_cursor.saturating_add(1);
+                                    } else {
+                                        self.beep()?;
+                                    }
                                 }
+                                KeyCode::Esc => {
+                                    self.edit_popup_cursor = 0;
+                                    self.edit_popup_input = String::new();
+                                    self.app_mode = AppMode::Main;
+                                }
+                                _ => {}
                             },
-                            KeyCode::Right => match self.connecting_popup_field {
-                                ConnectingField::Address => {
-                                    if self.address_input_cursor < self.address_input.len() - 1 {
-                                        self.address_input_cursor =
-                                            self.address_input_cursor.saturating_add(1);
-                                    }
-                                }
-                                ConnectingField::Port => {
-                                    if self.port_input_cursor < self.port_input.len() - 1 {
-                                        self.port_input_cursor =
-                                            self.port_input_cursor.saturating_add(1);
-                                    }
-                                }
-                            },
-                            KeyCode::Up | KeyCode::Down | KeyCode::Tab => {
-                                self.connecting_popup_field = match self.connecting_popup_field {
-                                    ConnectingField::Address => ConnectingField::Port,
-                                    ConnectingField::Port => ConnectingField::Address,
+                            Error(_) => {
+                                if key.code == KeyCode::Enter {
+                                    self.app_mode = AppMode::Main;
                                 }
                             }
-                            KeyCode::Delete => match self.connecting_popup_field {
-                                ConnectingField::Address => {
-                                    if self.address_input_cursor < self.address_input.len() - 1 {
-                                        self.address_input.remove(self.address_input_cursor);
-                                    } else {
-                                        self.beep()?;
-                                    }
-                                }
-                                ConnectingField::Port => {
-                                    if self.address_input_cursor < self.address_input.len() - 1 {
-                                        self.address_input.remove(self.address_input_cursor);
-                                    } else {
-                                        self.beep()?;
-                                    }
-                                }
-                            },
-                            KeyCode::Char(c) => match self.connecting_popup_field {
-                                ConnectingField::Address => {
-                                    if self.is_address_char(c) {
-                                        self.address_input.insert(self.address_input_cursor, c);
-                                        self.address_input_cursor =
-                                            self.address_input_cursor.saturating_add(1);
-                                    } else {
-                                        self.beep()?;
-                                    }
-                                }
-                                ConnectingField::Port => {
-                                    if c.is_ascii_digit() {
-                                        self.port_input.insert(self.port_input_cursor, c);
-                                        self.port_input_cursor =
-                                            self.port_input_cursor.saturating_add(1);
-                                    } else {
-                                        self.beep()?;
-                                    }
-                                }
-                            },
-                            KeyCode::Esc => self.exit = true,
-                            _ => {}
-                        },
-                        PopupType::Edit => match key.code {
-                            KeyCode::Backspace => {
-                                if self.edit_popup_cursor > 0 {
-                                    self.edit_popup_input.pop();
-                                    self.edit_popup_cursor =
-                                        self.edit_popup_cursor.saturating_sub(1);
-                                } else {
-                                    self.beep()?;
-                                }
+                            PopupType::Goto => {
+                                // TODO
                             }
-                            KeyCode::Enter => {
-                                if let Ok(new_value) = self.edit_popup_input.parse::<usize>() {
-                                    if new_value > 65535 {
-                                        self.beep()?;
-                                    } else {
-                                        self.table_queue_current_cell(new_value as u16);
-                                        self.edit_popup_cursor = 0;
-                                        self.edit_popup_input = String::new();
-                                        self.app_mode = AppMode::Main;
-                                    }
-                                } else {
-                                    self.beep()?;
-                                }
-                            }
-                            KeyCode::Char(c) => {
-                                if c.is_ascii_digit() && self.edit_popup_cursor < 5 {
-                                    self.edit_popup_input.push(c);
-                                    self.edit_popup_cursor =
-                                        self.edit_popup_cursor.saturating_add(1);
-                                } else {
-                                    self.beep()?;
-                                }
-                            }
-                            KeyCode::Esc => {
-                                self.edit_popup_cursor = 0;
-                                self.edit_popup_input = String::new();
-                                self.app_mode = AppMode::Main;
-                            }
-                            _ => {}
-                        },
-                        Error(_) => {
-                            if key.code == KeyCode::Enter {
-                                self.app_mode = AppMode::Main;
-                            }
-                        }
-                        PopupType::Goto => {
-                            // TODO
                         }
                     }
                 }
