@@ -21,7 +21,7 @@ jobs:
           - target: x86_64-pc-windows-gnu
             os: windows-latest
             name: windows-x86_64
-          - target: x86-64-apple-darwin
+          - target: x86_64-apple-darwin
             os: macos-latest
             name: macos-x86_64
           - target: aarch64-apple-darwin
