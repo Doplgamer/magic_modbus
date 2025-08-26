@@ -26,9 +26,9 @@ use ratatui::widgets::{
 };
 use ratatui::{
     DefaultTerminal, Frame,
-    crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    crossterm::event::{Event, EventStream, KeyCode, KeyModifiers},
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{Block, Cell, Row, Table, Tabs},
 };
@@ -1172,8 +1172,8 @@ impl App {
                                         CellState::Queued => cell.queued_content.to_u16(),
                                     }
                                 ))
-                                .centered()
-                                .style(Style::new().fg(Color::White))
+                                    .centered()
+                                    .style(Style::new().fg(Color::White))
                             }
                             SelectedTopTab::InputRegisters | SelectedTopTab::HoldingRegisters => {
                                 Line::raw(format!(
@@ -1183,8 +1183,8 @@ impl App {
                                         CellState::Queued => cell.queued_content.to_u16(),
                                     }
                                 ))
-                                .centered()
-                                .style(Style::new().fg(Color::White))
+                                    .centered()
+                                    .style(Style::new().fg(Color::White))
                             }
                         };
 
@@ -1198,12 +1198,10 @@ impl App {
                                 CurrentFocus::Bottom => self.colors.table_unselected_alt_cell_bg,
                             },
                         };
+
                         match cell.state {
-                            CellState::Normal => {
-                                Cell::from(cell_content).style(Style::new().bg(color))
-                            }
-                            CellState::Queued => Cell::from(cell_content)
-                                .style(Style::new().bg(color).add_modifier(Modifier::SLOW_BLINK)),
+                            CellState::Normal => Cell::from(cell_content).style(Style::new().bg(color)),
+                            CellState::Queued => Cell::from(cell_content).style(Style::new().bg(color).bold().underlined()),
                         }
                     })
                     .collect::<Vec<Cell>>();
@@ -1316,7 +1314,7 @@ impl App {
         frame.render_widget(Clear, area);
 
         let popup_content = Paragraph::new(vec![
-            Line::styled("Error", Style::new().add_modifier(Modifier::SLOW_BLINK)).centered(),
+            Line::styled("Error", Style::new()).centered().bold().underlined(),
             Line::from(vec![
                 Span::raw(" "),
                 Span::styled(message, Style::new().fg(Color::White)),
