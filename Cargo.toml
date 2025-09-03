@@ -1,6 +1,6 @@
 [package]
 name = "magic_modbus"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 authors = ["Isaac Schlaegel"]
 description = "A TUI tool written in Rust to make working with Modbus simple and easy"
