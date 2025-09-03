@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - 2025-09-01
+## [0.2.1] - 2025-09-03
+
+### Changed
+- Fixed help menu
+
+## [0.2.0] - 2025-09-03
 
 ### Added
 - Macro Support to allow saving queues of "write" commands as macro files
