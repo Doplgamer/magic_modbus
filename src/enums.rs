@@ -37,7 +37,7 @@ pub enum ModbusCommandQueue {
     Write(Vec<ModbusWriteCommand>),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CellType {
     Coil(bool),
     Word(u16),
@@ -78,6 +78,14 @@ pub enum PopupType {
     Edit,
     Error(String),
     Goto,
+    SaveMacro(SaveMacroMode),
+}
+
+#[derive(Clone)]
+pub enum SaveMacroMode {
+    Main,
+    OverwriteWarning,
+    FileSaved,
 }
 
 #[derive(Default)]
@@ -87,7 +95,9 @@ pub enum CurrentFocus {
     Bottom,
 }
 
-#[derive(Default, Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Display, FromRepr, EnumIter)]
+#[derive(
+    Default, Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Display, FromRepr, EnumIter,
+)]
 pub enum SelectedTopTab {
     #[default]
     #[strum(to_string = "Coils")]
@@ -125,8 +135,6 @@ pub enum SelectedBottomTab {
     Connection,
     #[strum(to_string = "Queue")]
     Queue,
-    #[strum(to_string = "Log")]
-    Log,
 }
 
 impl SelectedBottomTab {
