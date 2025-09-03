@@ -1340,7 +1340,6 @@ impl App {
         let [general_area, table_area] = Layout::vertical([
             Constraint::Length(6),
             Constraint::Min(8),
-            Constraint::Length(1),
         ])
             .areas(trimmed_area);
 
