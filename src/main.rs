@@ -16,37 +16,93 @@ mod app;
 mod app_colors;
 mod app_table;
 mod enums;
-mod logger;
+mod macro_parser;
 mod queue;
 mod utils;
 
-use crate::app::App;
+use crate::{app::App, macro_parser::MagModCommandList};
+use clap::{ArgGroup, Parser, Subcommand};
 use color_eyre::Result;
+use std::{net::IpAddr, path::PathBuf};
 
-// TODO Eventually have a way to convert the queued command / current connection into a macro file
-// Plugging this file into magic_modbus will connect to the specified place and run the commands
-// Adding any extra arguments to the macro, such as the address/port to connect to, will change what's done, otherwise
-// the program will fallback to the macro itself
+#[derive(Parser)]
+#[command(version, about, author)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+    #[arg(short, long, value_parser, requires = "port")]
+    /// Target address
+    address: Option<IpAddr>,
+    #[arg(short, long, value_parser, requires = "address")]
+    /// Target port
+    port: Option<u16>,
+}
 
-// TODO Finish the help menu once all the controls are thought out
-
-// TODO
-// Make sure that the queue menu actually reflects the queued cells, make the macro mechanic work properly
-// Make sure that the log menu actually logs what's going on, turn to that async logging that you checked out for a bit
-// Add integration with Clap (auto-connecting to an address/port, using a saved macro, etc etc)
-// Clean up the code to make it more organized
-// Run it through Warp to check for any potential problems
-// Get it on github with a good license to protect your work
-// Make a post on LinkedIn
+#[derive(Subcommand)]
+enum Commands {
+    #[command(group(
+    ArgGroup::new("macro_file")
+    .required(true)
+    .multiple(false)
+    .args(["macro_file_no_confirm", "macro_file_with_confirm"])
+    ))]
+    #[command(group(
+    ArgGroup::new("run_mode")
+    .required(false)
+    .multiple(false)
+    .args(["check_connection", "dry_run"])
+    ))]
+    /// Access the macro parser
+    ParseMacro {
+        #[arg(short = 'M')]
+        /// Run macro file immediately
+        macro_file_no_confirm: Option<PathBuf>,
+        #[arg(short = 'm')]
+        /// Allow changing of IP Address + Port
+        macro_file_with_confirm: Option<PathBuf>,
+        #[arg(long = "check-connection")]
+        /// Check to see if `magic-modbus` can connect
+        check_connection: bool,
+        #[arg(long = "dry-run")]
+        /// Simulate a connection without actually doing anything
+        dry_run: bool,
+    },
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
-    let mut terminal = ratatui::init();
+    let cli = Cli::parse();
 
-    App::new().run(&mut terminal).await?;
+    match cli.command {
+        Some(Commands::ParseMacro {
+            macro_file_with_confirm,
+            macro_file_no_confirm,
+            check_connection,
+            dry_run,
+        }) => {
+            if let Some(file_path) = macro_file_with_confirm {
+                let mut command_list = MagModCommandList::from_file(file_path).await?;
+                command_list
+                    .run_macro(true, check_connection, dry_run)
+                    .await?;
+            }
 
-    ratatui::restore();
+            if let Some(file_path) = macro_file_no_confirm {
+                let mut command_list = MagModCommandList::from_file(file_path).await?;
+                command_list
+                    .run_macro(false, check_connection, dry_run)
+                    .await?;
+            }
+        }
+        None => {
+            let mut terminal = ratatui::init();
+
+            App::new().run(&mut terminal, cli.address, cli.port).await?;
+
+            ratatui::restore();
+        }
+    }
 
     Ok(())
 }

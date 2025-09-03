@@ -18,6 +18,7 @@ Magic Modbus is a CLI tool built with Rust that provides an intuitive terminal i
 - 🚀 **Async Architecture** - Non-blocking operations with `tokio` for smooth performance
 - 💾 **Memory Efficient** - Sparse data storage using HashMaps instead of pre-allocated arrays
 - 🎨 **Dynamic Styling** - Color-coded interface that changes based on selected data type
+- ❓ **Comprehensive Help Menu** - Help menu which shows how to properly use every included feature
 
 ## Installation
 
@@ -37,12 +38,28 @@ The binary will be available at `target/release/magic_modbus`.
 
 ```bash
 # Run the application
-cargo run
+cargo run -- --help
 # or if you built the release binary:
-./target/release/magic_modbus
+./target/release/magic_modbus --help
+
+# There are two distinct modes which can be used
+# TUI Mode
+cargo run --
+# Macro Parser Mode
+cargo run parse-macro
 ```
 
-### Controls
+
+### Macro Mode
+- You have the ability to save queued commands as macro files which then can be parsed by the application
+- To use this feature, do the following:
+1. Connect to a server in TUI mode
+2. Queue/Toggle different operations without applying
+3. In the `Queue` Tab, save the queued operations to a macro file by pressing `M`
+4. Enter a name for your file - your file will appear in the current working directory with the extension `.magmod`
+5. Run in Macro Parser mode, providing the `.magmod` file from before.
+
+### TUI Controls
 
 #### Main Navigation
 - `Esc` - Quit application
@@ -128,5 +145,6 @@ at your option.
 ## Acknowledgments
 
 - Built with [`ratatui`](https://github.com/ratatui-org/ratatui) for the terminal UI
+- Built with [`clap`](https://github.com/clap-rs/clap) for the CLI interface
 - Uses [`tokio-modbus`](https://github.com/slowtec/tokio-modbus) for async Modbus protocol support
 - Inspired by the need to make Modbus more accessible to developers and engineers

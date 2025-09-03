@@ -20,17 +20,16 @@ use std::{
 
 use color_eyre::Result;
 use futures::StreamExt;
-use ratatui::layout::Margin;
-use ratatui::widgets::{
-    Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, TableState,
-};
 use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{Event, EventStream, KeyCode, KeyModifiers},
-    layout::{Constraint, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Margin, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Cell, Row, Table, Tabs},
+    widgets::{
+        Block, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Table, TableState, Tabs, Wrap,
+    },
 };
 use strum::IntoEnumIterator;
 use tokio::{
@@ -40,28 +39,24 @@ use tokio::{
 use tokio_modbus::client::{Reader, Writer, tcp};
 use tokio_util::sync::CancellationToken;
 
-use crate::enums::PopupType::Error;
-use crate::enums::{
-    AppMode, CellState, CellType, ConnectingField, ModbusCommandQueue, PopupType,
-    SelectedConnectionButton,
-};
-use crate::queue::QueueItem;
-use crate::utils::{ModbusReadCommand, ModbusWriteCommand, centered_rect, trim_borders};
 use crate::{
     app_colors::{AppColors, PALETTES},
     app_table::AppTable,
-    enums::{Action, ConnectionStatus, CurrentFocus, SelectedBottomTab, SelectedTopTab},
+    enums::*,
+    macro_parser::MagModCommandList,
+    queue::QueueItem,
+    utils::{ModbusReadCommand, ModbusWriteCommand, centered_rect, trim_borders},
 };
 
 const CONNECTION_POPUP_TEXT: &str = "Please Enter an IP Address and Port";
 
 const FOOTER_TEXT: [&str; 6] = [
     "(Esc) Quit | (Q) Previous Tab | (E) Next Tab | (Tab) Change Focus | (?) Help", // Main Controls
-    "(W A S D) / (↑ ↓ ← →) Select Cell | (Space) Queue/Toggle | Enter Apply", // Top Tab Controls
-    "(← →) Change Selection | (Enter) Select Option",                         // Connection Menu
-    "(M) Save As Macro",                                                      // Queue Menu
-    "Log Menu Controls - Not implemented!",                                   // Log Menu
-    "(Enter) - Leave Popup",                                                  // Error Popup
+    "(W A S D) Navigate | (Space) Toggle/Edit | (Enter) Apply | (G) Go To", // Top Tab Controls
+    "(← →) Select Button | (Enter) Connect/Disconnect",                     // Connection Menu
+    "(↑ ↓) Navigate | (G) Go To Address | (R) Revert Item | (M) Save Macro", // Queue Menu
+    "(Enter) - Close Popup",                                                // Error Popup
+    "Enter address (1-65535) | (Enter) Go To Address | (Esc) Cancel",       // Goto Popup
 ];
 
 pub struct App {
@@ -99,18 +94,27 @@ pub struct App {
 
     // Connection Popup
     connecting_popup_field: ConnectingField,
-    address_input: String,
-    port_input: String,
     address_input_cursor: usize,
+    address_input: String,
     port_input_cursor: usize,
+    port_input: String,
 
     // Edit Popup
     edit_popup_cursor: usize,
     edit_popup_input: String,
 
+    // Goto Popup
+    goto_popup_cursor: usize,
+    goto_popup_input: String,
+
+    // Macro Popup
+    macro_popup_cursor: usize,
+    macro_popup_input: String,
+
     // Misc Statuses
     page_refresh: bool, // Reads the page every time you change pages
     tick_refresh: bool, // Reads the page every tick
+    help_menu_page: u8,
     exit: bool,
 }
 
@@ -167,14 +171,28 @@ impl App {
             edit_popup_cursor: 0,
             edit_popup_input: String::new(),
 
+            // Goto Popup
+            goto_popup_cursor: 0,
+            goto_popup_input: String::new(),
+
+            // Macro Popup
+            macro_popup_cursor: 0,
+            macro_popup_input: String::new(),
+
             // Misc Statuses
             page_refresh: false,
             tick_refresh: false,
+            help_menu_page: 0,
             exit: false,
         }
     }
 
-    pub async fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+    pub async fn run(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        addr: Option<IpAddr>,
+        port: Option<u16>,
+    ) -> Result<()> {
         self.cancellation_token.cancel();
         self.cancellation_token = CancellationToken::new();
 
@@ -213,6 +231,11 @@ impl App {
             }
         });
 
+        if let (Some(addr), Some(port)) = (addr, port) {
+            let socket_addr = SocketAddr::new(addr, port);
+            let _ = self.sender.send(Action::Connect(socket_addr)).await;
+        }
+
         while !self.exit {
             match self.receiver.recv().await {
                 Some(action) => match action {
@@ -239,13 +262,13 @@ impl App {
                         self.current_ip_address = None;
                         self.current_port = None;
 
-                        self.app_mode = AppMode::Popup(Error(message));
+                        self.app_mode = AppMode::Popup(PopupType::Error(message));
                     }
                     Action::Disconnect => {
                         self.stop_modbus_task().await;
                     }
                     Action::Error(message) => {
-                        self.app_mode = AppMode::Popup(Error(message));
+                        self.app_mode = AppMode::Popup(PopupType::Error(message));
                     }
                     Action::PageRefresh => {
                         if self.page_refresh {
@@ -515,12 +538,15 @@ impl App {
                                     KeyCode::Down | KeyCode::Char('s') if shift_pressed => {
                                         self.table_page_down().await
                                     }
-                                    KeyCode::Down | KeyCode::Char('s') => self.table_move_down().await,
+                                    KeyCode::Down | KeyCode::Char('s') => {
+                                        self.table_move_down().await
+                                    }
                                     KeyCode::Left | KeyCode::Char('a') => self.table_move_left(),
                                     KeyCode::Right | KeyCode::Char('d') => self.table_move_right(),
                                     KeyCode::Char('r') => {
                                         // Read the values that are currently on the screen
-                                        if let ConnectionStatus::Connected = self.connection_status {
+                                        if let ConnectionStatus::Connected = self.connection_status
+                                        {
                                             self.modbus_read_current_page().await;
                                         } else {
                                             let _ = self
@@ -544,13 +570,17 @@ impl App {
                                         }
                                     }
                                     KeyCode::Char('u') => {
-                                        if let ConnectionStatus::Connected = self.connection_status {
+                                        if let ConnectionStatus::Connected = self.connection_status
+                                        {
                                             self.table_revert_current_cell();
                                         }
-                                    } // Undo (Revert)
-                                    KeyCode::Char('g') => {} // TODO Go to address (unfinished)
+                                    }
+                                    KeyCode::Char('g') => {
+                                        self.app_mode = AppMode::Popup(PopupType::Goto);
+                                    }
                                     KeyCode::Enter => {
-                                        if let ConnectionStatus::Connected = self.connection_status {
+                                        if let ConnectionStatus::Connected = self.connection_status
+                                        {
                                             self.modbus_apply_queued().await;
                                         } else {
                                             let _ = self
@@ -560,9 +590,10 @@ impl App {
                                                 )))
                                                 .await;
                                         }
-                                    } // Apply
+                                    }
                                     KeyCode::Char(' ') => {
-                                        if let ConnectionStatus::Connected = self.connection_status {
+                                        if let ConnectionStatus::Connected = self.connection_status
+                                        {
                                             match self.selected_top_tab {
                                                 SelectedTopTab::Coils => {
                                                     self.table_toggle_current_cell()
@@ -580,7 +611,7 @@ impl App {
                                                 )))
                                                 .await;
                                         }
-                                    } // Queue/Toggle
+                                    }
                                     KeyCode::Char('?') => self.app_mode = AppMode::Help,
                                     _ => {}
                                 }
@@ -614,7 +645,8 @@ impl App {
                                         }
                                         KeyCode::Enter => match self.selected_connection_button {
                                             SelectedConnectionButton::NewConnection => {
-                                                self.app_mode = AppMode::Popup(PopupType::Connection);
+                                                self.app_mode =
+                                                    AppMode::Popup(PopupType::Connection);
                                             }
                                             SelectedConnectionButton::Disconnect => {
                                                 self.sender.send(Action::Disconnect).await?
@@ -629,12 +661,46 @@ impl App {
                                         KeyCode::Down => {
                                             self.queue_select_next_item();
                                         }
-                                        KeyCode::Char('g') => self.table_go_to_cell(
-                                            self.queue_table_data[self.queue_item_index].address,
-                                        ),
-                                        _ => {}
-                                    },
-                                    SelectedBottomTab::Log => match key.code {
+                                        KeyCode::Char('g') => {
+                                            if !self.queue_table_data.is_empty() {
+                                                self.queue_go_to_cell(
+                                                    self.queue_table_data[self.queue_item_index]
+                                                        .address,
+                                                    self.queue_table_data[self.queue_item_index]
+                                                        .table_index,
+                                                );
+                                            }
+                                        }
+                                        KeyCode::Char('r') => {
+                                            if !self.queue_table_data.is_empty() {
+                                                self.queue_revert_item()
+                                            }
+                                        }
+                                        KeyCode::Char('m') => {
+                                            if let ConnectionStatus::Connected =
+                                                self.connection_status
+                                            {
+                                                if !self.queue_table_data.is_empty() {
+                                                    self.app_mode = AppMode::Popup(
+                                                        PopupType::SaveMacro(SaveMacroMode::Main),
+                                                    );
+                                                } else {
+                                                    let _ = self
+                                                        .sender
+                                                        .send(Action::Error(String::from(
+                                                            "Queue some commands first",
+                                                        )))
+                                                        .await;
+                                                }
+                                            } else {
+                                                let _ = self
+                                                    .sender
+                                                    .send(Action::Error(String::from(
+                                                        "Connect to a server first",
+                                                    )))
+                                                    .await;
+                                            }
+                                        }
                                         _ => {}
                                     },
                                 }
@@ -644,177 +710,342 @@ impl App {
                     AppMode::Help => match key.code {
                         KeyCode::Esc => self.exit = true,
                         KeyCode::Char('?') => self.app_mode = AppMode::Main,
+                        KeyCode::Tab => self.help_menu_page = match self.help_menu_page {
+                            0 => 1,
+                            _ => 0,
+                        },
                         _ => {}
                     },
-                    AppMode::Popup(popup) => {
-                        match popup {
-                            PopupType::Connection => match key.code {
-                                KeyCode::Backspace => match self.connecting_popup_field {
-                                    ConnectingField::Address => {
-                                        if self.address_input_cursor > 0 {
-                                            self.address_input.remove(self.address_input_cursor - 1);
-                                            self.address_input_cursor =
-                                                self.address_input_cursor.saturating_sub(1);
-                                        } else {
-                                            self.beep()?;
-                                        }
-                                    }
-                                    ConnectingField::Port => {
-                                        if self.port_input_cursor > 0 {
-                                            self.port_input.remove(self.port_input_cursor - 1);
-                                            self.port_input_cursor =
-                                                self.port_input_cursor.saturating_sub(1);
-                                        } else {
-                                            self.beep()?;
-                                        }
-                                    }
-                                },
-                                KeyCode::Enter => {
-                                    if self.address_input.len() < 2 || self.port_input.len() < 2 {
-                                        self.beep()?;
-                                    }
-
-                                    let address = (self.address_input.as_str().trim().to_owned()
-                                        + ":"
-                                        + self.port_input.as_str().trim())
-                                        .parse::<SocketAddr>();
-
-                                    match address {
-                                        Ok(addr) => {
-                                            self.app_mode = AppMode::Main;
-
-                                            self.address_input = String::from(" ");
-                                            self.address_input_cursor = 0;
-
-                                            self.port_input = String::from(" ");
-                                            self.port_input_cursor = 0;
-
-                                            self.connecting_popup_field = ConnectingField::Address;
-
-                                            self.sender.send(Action::Connect(addr)).await?;
-                                        }
-                                        Err(_) => self.beep()?,
-                                    }
-                                }
-                                KeyCode::Left => match self.connecting_popup_field {
-                                    ConnectingField::Address => {
+                    AppMode::Popup(popup) => match popup {
+                        PopupType::Connection => match key.code {
+                            KeyCode::Esc => self.exit = true,
+                            KeyCode::Backspace => match self.connecting_popup_field {
+                                ConnectingField::Address => {
+                                    if self.address_input_cursor > 0 {
+                                        self.address_input.remove(self.address_input_cursor - 1);
                                         self.address_input_cursor =
-                                            self.address_input_cursor.saturating_sub(1)
+                                            self.address_input_cursor.saturating_sub(1);
+                                    } else {
+                                        self.beep()?;
                                     }
-                                    ConnectingField::Port => {
+                                }
+                                ConnectingField::Port => {
+                                    if self.port_input_cursor > 0 {
+                                        self.port_input.remove(self.port_input_cursor - 1);
                                         self.port_input_cursor =
-                                            self.port_input_cursor.saturating_sub(1)
-                                    }
-                                },
-                                KeyCode::Right => match self.connecting_popup_field {
-                                    ConnectingField::Address => {
-                                        if self.address_input_cursor < self.address_input.len() - 1 {
-                                            self.address_input_cursor =
-                                                self.address_input_cursor.saturating_add(1);
-                                        }
-                                    }
-                                    ConnectingField::Port => {
-                                        if self.port_input_cursor < self.port_input.len() - 1 {
-                                            self.port_input_cursor =
-                                                self.port_input_cursor.saturating_add(1);
-                                        }
-                                    }
-                                },
-                                KeyCode::Up | KeyCode::Down | KeyCode::Tab => {
-                                    self.connecting_popup_field = match self.connecting_popup_field {
-                                        ConnectingField::Address => ConnectingField::Port,
-                                        ConnectingField::Port => ConnectingField::Address,
+                                            self.port_input_cursor.saturating_sub(1);
+                                    } else {
+                                        self.beep()?;
                                     }
                                 }
-                                KeyCode::Delete => match self.connecting_popup_field {
-                                    ConnectingField::Address => {
-                                        if self.address_input_cursor < self.address_input.len() - 1 {
-                                            self.address_input.remove(self.address_input_cursor);
-                                        } else {
-                                            self.beep()?;
-                                        }
-                                    }
-                                    ConnectingField::Port => {
-                                        if self.address_input_cursor < self.address_input.len() - 1 {
-                                            self.address_input.remove(self.address_input_cursor);
-                                        } else {
-                                            self.beep()?;
-                                        }
-                                    }
-                                },
-                                KeyCode::Char(c) => match self.connecting_popup_field {
-                                    ConnectingField::Address => {
-                                        if self.is_address_char(c) {
-                                            self.address_input.insert(self.address_input_cursor, c);
-                                            self.address_input_cursor =
-                                                self.address_input_cursor.saturating_add(1);
-                                        } else {
-                                            self.beep()?;
-                                        }
-                                    }
-                                    ConnectingField::Port => {
-                                        if c.is_ascii_digit() {
-                                            self.port_input.insert(self.port_input_cursor, c);
-                                            self.port_input_cursor =
-                                                self.port_input_cursor.saturating_add(1);
-                                        } else {
-                                            self.beep()?;
-                                        }
-                                    }
-                                },
-                                KeyCode::Esc => self.exit = true,
-                                _ => {}
                             },
-                            PopupType::Edit => match key.code {
-                                KeyCode::Backspace => {
-                                    if self.edit_popup_cursor > 0 {
-                                        self.edit_popup_input.pop();
-                                        self.edit_popup_cursor =
-                                            self.edit_popup_cursor.saturating_sub(1);
-                                    } else {
-                                        self.beep()?;
+                            KeyCode::Enter => {
+                                if self.address_input.len() < 2 || self.port_input.len() < 2 {
+                                    self.beep()?;
+                                }
+
+                                let address = (self.address_input.as_str().trim().to_owned()
+                                    + ":"
+                                    + self.port_input.as_str().trim())
+                                .parse::<SocketAddr>();
+
+                                match address {
+                                    Ok(addr) => {
+                                        self.app_mode = AppMode::Main;
+
+                                        self.address_input = String::from(" ");
+                                        self.address_input_cursor = 0;
+
+                                        self.port_input = String::from(" ");
+                                        self.port_input_cursor = 0;
+
+                                        self.connecting_popup_field = ConnectingField::Address;
+
+                                        self.sender.send(Action::Connect(addr)).await?;
                                     }
-                                }
-                                KeyCode::Enter => {
-                                    if let Ok(new_value) = self.edit_popup_input.parse::<usize>() {
-                                        if new_value > 65535 {
-                                            self.beep()?;
-                                        } else {
-                                            self.table_queue_current_cell(new_value as u16);
-                                            self.edit_popup_cursor = 0;
-                                            self.edit_popup_input = String::new();
-                                            self.app_mode = AppMode::Main;
-                                        }
-                                    } else {
-                                        self.beep()?;
-                                    }
-                                }
-                                KeyCode::Char(c) => {
-                                    if c.is_ascii_digit() && self.edit_popup_cursor < 5 {
-                                        self.edit_popup_input.push(c);
-                                        self.edit_popup_cursor =
-                                            self.edit_popup_cursor.saturating_add(1);
-                                    } else {
-                                        self.beep()?;
-                                    }
-                                }
-                                KeyCode::Esc => {
-                                    self.edit_popup_cursor = 0;
-                                    self.edit_popup_input = String::new();
-                                    self.app_mode = AppMode::Main;
-                                }
-                                _ => {}
-                            },
-                            Error(_) => {
-                                if key.code == KeyCode::Enter {
-                                    self.app_mode = AppMode::Main;
+                                    Err(_) => self.beep()?,
                                 }
                             }
-                            PopupType::Goto => {
-                                // TODO
+                            KeyCode::Left => match self.connecting_popup_field {
+                                ConnectingField::Address => {
+                                    self.address_input_cursor =
+                                        self.address_input_cursor.saturating_sub(1)
+                                }
+                                ConnectingField::Port => {
+                                    self.port_input_cursor =
+                                        self.port_input_cursor.saturating_sub(1)
+                                }
+                            },
+                            KeyCode::Right => match self.connecting_popup_field {
+                                ConnectingField::Address => {
+                                    if self.address_input_cursor < self.address_input.len() - 1 {
+                                        self.address_input_cursor =
+                                            self.address_input_cursor.saturating_add(1);
+                                    }
+                                }
+                                ConnectingField::Port => {
+                                    if self.port_input_cursor < self.port_input.len() - 1 {
+                                        self.port_input_cursor =
+                                            self.port_input_cursor.saturating_add(1);
+                                    }
+                                }
+                            },
+                            KeyCode::Up | KeyCode::Down | KeyCode::Tab => {
+                                self.connecting_popup_field = match self.connecting_popup_field {
+                                    ConnectingField::Address => ConnectingField::Port,
+                                    ConnectingField::Port => ConnectingField::Address,
+                                }
+                            }
+                            KeyCode::Delete => match self.connecting_popup_field {
+                                ConnectingField::Address => {
+                                    if self.address_input_cursor < self.address_input.len() - 1 {
+                                        self.address_input.remove(self.address_input_cursor);
+                                    } else {
+                                        self.beep()?;
+                                    }
+                                }
+                                ConnectingField::Port => {
+                                    if self.address_input_cursor < self.address_input.len() - 1 {
+                                        self.address_input.remove(self.address_input_cursor);
+                                    } else {
+                                        self.beep()?;
+                                    }
+                                }
+                            },
+                            KeyCode::Char(c) => match self.connecting_popup_field {
+                                ConnectingField::Address => {
+                                    if self.is_address_char(c) {
+                                        self.address_input.insert(self.address_input_cursor, c);
+                                        self.address_input_cursor =
+                                            self.address_input_cursor.saturating_add(1);
+                                    } else {
+                                        self.beep()?;
+                                    }
+                                }
+                                ConnectingField::Port => {
+                                    if c.is_ascii_digit() {
+                                        self.port_input.insert(self.port_input_cursor, c);
+                                        self.port_input_cursor =
+                                            self.port_input_cursor.saturating_add(1);
+                                    } else {
+                                        self.beep()?;
+                                    }
+                                }
+                            },
+                            _ => {}
+                        },
+                        PopupType::Edit => match key.code {
+                            KeyCode::Esc => {
+                                self.edit_popup_cursor = 0;
+                                self.edit_popup_input = String::new();
+                                self.app_mode = AppMode::Main;
+                            }
+                            KeyCode::Backspace => {
+                                if self.edit_popup_cursor > 0 {
+                                    self.edit_popup_input.pop();
+                                    self.edit_popup_cursor =
+                                        self.edit_popup_cursor.saturating_sub(1);
+                                } else {
+                                    self.beep()?;
+                                }
+                            }
+                            KeyCode::Enter => {
+                                if let Ok(new_value) = self.edit_popup_input.parse::<usize>() {
+                                    if new_value > 65535 {
+                                        self.beep()?;
+                                    } else {
+                                        self.table_queue_current_cell(new_value as u16);
+                                        self.edit_popup_cursor = 0;
+                                        self.edit_popup_input = String::new();
+                                        self.app_mode = AppMode::Main;
+                                    }
+                                } else {
+                                    self.beep()?;
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                if c.is_ascii_digit() && self.edit_popup_cursor < 5 {
+                                    self.edit_popup_input.push(c);
+                                    self.edit_popup_cursor =
+                                        self.edit_popup_cursor.saturating_add(1);
+                                } else {
+                                    self.beep()?;
+                                }
+                            }
+                            _ => {}
+                        },
+                        PopupType::Error(_) => {
+                            if key.code == KeyCode::Enter {
+                                self.app_mode = AppMode::Main;
                             }
                         }
-                    }
+                        PopupType::Goto => match key.code {
+                            KeyCode::Esc => {
+                                self.goto_popup_cursor = 0;
+                                self.goto_popup_input = String::new();
+                                self.app_mode = AppMode::Main;
+                            }
+                            KeyCode::Backspace => {
+                                if self.goto_popup_cursor > 0 {
+                                    self.goto_popup_input.pop();
+                                    self.goto_popup_cursor =
+                                        self.goto_popup_cursor.saturating_sub(1);
+                                } else {
+                                    self.beep()?;
+                                }
+                            }
+                            KeyCode::Enter => {
+                                if let Ok(new_value) = self.goto_popup_input.parse::<usize>() {
+                                    if !(1..=65535).contains(&new_value) {
+                                        self.beep()?;
+                                    } else {
+                                        self.table_go_to_cell((new_value - 1) as u16);
+                                        self.goto_popup_cursor = 0;
+                                        self.goto_popup_input = String::new();
+                                        self.app_mode = AppMode::Main;
+                                    }
+                                } else {
+                                    self.beep()?;
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                if c.is_ascii_digit() && self.goto_popup_cursor < 5 {
+                                    self.goto_popup_input.push(c);
+                                    self.goto_popup_cursor =
+                                        self.goto_popup_cursor.saturating_add(1);
+                                } else {
+                                    self.beep()?;
+                                }
+                            }
+                            _ => {}
+                        },
+                        PopupType::SaveMacro(save_macro_mode) => match save_macro_mode {
+                            SaveMacroMode::Main => match key.code {
+                                KeyCode::Esc => {
+                                    self.macro_popup_cursor = 0;
+                                    self.macro_popup_input = String::new();
+                                    self.app_mode = AppMode::Main;
+                                }
+                                KeyCode::Backspace => {
+                                    if self.macro_popup_cursor > 0 {
+                                        self.macro_popup_input.pop();
+                                        self.macro_popup_cursor =
+                                            self.macro_popup_cursor.saturating_sub(1);
+                                    } else {
+                                        self.beep()?;
+                                    }
+                                }
+                                KeyCode::Enter => {
+                                    let magmod_contents = MagModCommandList::new(
+                                        self.current_ip_address
+                                            .expect("This shouldn't be possible")
+                                            .into(),
+                                        self.current_port.expect("This shouldn't be possible"),
+                                        self.queue_table_data
+                                            .iter()
+                                            .map(|queue_item| {
+                                                (
+                                                    queue_item.cell.table_type,
+                                                    queue_item.address,
+                                                    queue_item.cell.queued_content,
+                                                )
+                                            })
+                                            .collect(),
+                                    );
+                                    match magmod_contents
+                                        .to_file(self.macro_popup_input.clone(), false)
+                                        .await
+                                    {
+                                        Ok(_) => {
+                                            self.macro_popup_input = String::new();
+                                            self.macro_popup_cursor = 0;
+                                            self.app_mode = AppMode::Popup(PopupType::SaveMacro(
+                                                SaveMacroMode::FileSaved,
+                                            ));
+                                        }
+                                        Err(err) => {
+                                            if let std::io::ErrorKind::AlreadyExists = err.kind() {
+                                                self.app_mode =
+                                                    AppMode::Popup(PopupType::SaveMacro(
+                                                        SaveMacroMode::OverwriteWarning,
+                                                    ));
+                                            } else {
+                                                self.app_mode = AppMode::Main;
+                                                let _ = self
+                                                    .sender
+                                                    .send(Action::Error(err.kind().to_string()))
+                                                    .await;
+                                            }
+                                        }
+                                    };
+                                }
+                                KeyCode::Char(c) => {
+                                    if (c.is_alphanumeric() || matches!(c, '_' | '-'))
+                                        && self.macro_popup_cursor < 50
+                                    {
+                                        self.macro_popup_input.push(c);
+                                        self.macro_popup_cursor =
+                                            self.macro_popup_cursor.saturating_add(1);
+                                    } else {
+                                        self.beep()?;
+                                    }
+                                }
+                                _ => {}
+                            },
+                            SaveMacroMode::OverwriteWarning => match key.code {
+                                KeyCode::Esc => {
+                                    self.macro_popup_cursor = 0;
+                                    self.macro_popup_input = String::new();
+                                    self.app_mode = AppMode::Main;
+                                }
+                                KeyCode::Char('y') => {
+                                    let magmod_contents = MagModCommandList::new(
+                                        self.current_ip_address
+                                            .expect("This shouldn't be possible")
+                                            .into(),
+                                        self.current_port.expect("This shouldn't be possible"),
+                                        self.queue_table_data
+                                            .iter()
+                                            .map(|queue_item| {
+                                                (
+                                                    queue_item.cell.table_type,
+                                                    queue_item.address,
+                                                    queue_item.cell.queued_content,
+                                                )
+                                            })
+                                            .collect(),
+                                    );
+                                    match magmod_contents
+                                        .to_file(self.macro_popup_input.clone(), true)
+                                        .await
+                                    {
+                                        Ok(_) => {
+                                            self.macro_popup_input = String::new();
+                                            self.macro_popup_cursor = 0;
+                                            self.app_mode = AppMode::Popup(PopupType::SaveMacro(
+                                                SaveMacroMode::FileSaved,
+                                            ));
+                                        }
+                                        Err(err) => {
+                                            self.app_mode = AppMode::Main;
+                                            let _ = self
+                                                .sender
+                                                .send(Action::Error(err.kind().to_string()))
+                                                .await;
+                                        }
+                                    };
+                                }
+                                KeyCode::Char('n') => {
+                                    self.app_mode =
+                                        AppMode::Popup(PopupType::SaveMacro(SaveMacroMode::Main))
+                                }
+                                _ => {}
+                            },
+                            SaveMacroMode::FileSaved => if key.code == KeyCode::Enter {
+                                self.app_mode = AppMode::Main;
+                            },
+                        },
+                    },
                 }
             }
         }
@@ -861,8 +1092,13 @@ impl App {
                 match popup_type {
                     PopupType::Connection => self.render_connection_popup(frame, frame.area()),
                     PopupType::Edit => self.render_edit_popup(frame, frame.area()),
-                    Error(message) => self.render_error_popup(frame, frame.area(), message),
-                    PopupType::Goto => {} // TODO
+                    PopupType::Error(message) => {
+                        self.render_error_popup(frame, frame.area(), message)
+                    }
+                    PopupType::Goto => self.render_goto_popup(frame, frame.area()),
+                    PopupType::SaveMacro(save_macro_mode) => {
+                        self.render_macro_popup(frame, frame.area(), save_macro_mode)
+                    }
                 }
             }
         }
@@ -919,7 +1155,6 @@ impl App {
             CurrentFocus::Bottom => match self.selected_bottom_tab {
                 SelectedBottomTab::Connection => FOOTER_TEXT[2],
                 SelectedBottomTab::Queue => FOOTER_TEXT[3],
-                SelectedBottomTab::Log => FOOTER_TEXT[4],
             },
         };
         let test_footer = Text::from(vec![
@@ -971,7 +1206,6 @@ impl App {
         match self.selected_bottom_tab {
             SelectedBottomTab::Connection => self.render_connection_tab(frame, main_area),
             SelectedBottomTab::Queue => self.render_queue_tab(frame, main_area),
-            SelectedBottomTab::Log => self.render_log_tab(frame, main_area),
         }
     }
 
@@ -1028,10 +1262,6 @@ impl App {
                 .centered(),
         ])
         .block(Block::bordered());
-
-        // Two buttons
-        // New Connection -> Popup (Use the one from tokio_testing project)
-        // Disconnect
 
         frame.render_widget(connection_stats, stats_area);
         frame.render_widget(connection_button, connect_button_area);
@@ -1096,35 +1326,169 @@ impl App {
                 area,
             )
         }
-
-        // List-style table, space to "Select" queued actions and reorder them, 'r' to revert the selected cell
-        // M saves as super compressed macro file (so we'll probably need serde), save the connection details, what cells to read
-        // 'g' goes to the address of the currently selected cell
-        // (in macro mode, any cells it reads will be outputted to the terminal, any cells it writes will also be outputted to the terminal
-        // Color Code the different blocks, Reading is Cyan, Writing is Yellow, the four address spaces are color-coded the same way as they are in the app
-        // [Writing][Coils] - 0x0000f (000015) - 1 (On) -> 0 (Off)
-        // [Reading][Coils] - 0x0000f (000015) - 1 (On) (Reading might not be possible yet)
-    }
-
-    fn render_log_tab(&self, frame: &mut Frame, area: Rect) {
-        let area_style = match self.current_focus {
-            CurrentFocus::Top => self.colors.section_unselected_fg,
-            CurrentFocus::Bottom => self.colors.section_selected_fg,
-        };
-
-        let test_block = Block::bordered()
-            .title("Temp Title - Log Area")
-            .style(area_style);
-
-        // Use the async logging thing you checked out, have a simple list that you can scroll through, potentially have an option to save the logs
-
-        frame.render_widget(test_block, area);
     }
 
     fn render_help_menu(&self, frame: &mut Frame, area: Rect) {
-        let help_menu = Block::default().title("Help Menu");
+        let help_menu_block = Block::bordered()
+            .title(format!("Magic ModBus - Help Menu (Page {}/2)", self.help_menu_page + 1))
+            .title_alignment(Alignment::Center)
+            .style(self.colors.section_selected_fg);
+        frame.render_widget(help_menu_block, area);
 
-        frame.render_widget(help_menu, area);
+        let trimmed_area = trim_borders(area);
+
+        let [general_area, table_area] = Layout::vertical([
+            Constraint::Length(6),
+            Constraint::Min(8),
+            Constraint::Length(1),
+        ])
+            .areas(trimmed_area);
+
+        let [connection_area, queue_area, _, help_hint_area] = Layout::vertical([
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Fill(1),
+            Constraint::Length(1),
+        ])
+            .areas(trimmed_area);
+
+        // General Controls Section
+        let general_help = Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled("ESC", Style::default().bold()),
+                Span::raw(" - Quit Application"),
+            ]),
+            Line::from(vec![
+                Span::styled("TAB", Style::default().bold()),
+                Span::raw(" - Switch Focus (Top/Bottom panels)"),
+            ]),
+            Line::from(vec![
+                Span::styled("?", Style::default().bold()),
+                Span::raw(" - Toggle Help Menu"),
+            ]),
+            Line::from(vec![
+                Span::styled("Q/E", Style::default().bold()),
+                Span::raw(" - Previous/Next Tab"),
+            ]),
+        ])
+        .block(
+            Block::new()
+                .borders(Borders::BOTTOM)
+                .title("General Controls"),
+        );
+
+        // Table Navigation Section
+        let table_help = Paragraph::new(vec![
+            Line::from("Navigation (when focused on top panel):"),
+            Line::from(vec![
+                Span::styled("W/A/S/D", Style::default().bold()),
+                Span::raw(" or "),
+                Span::styled("Arrow Keys", Style::default().bold()),
+                Span::raw(" - Move cursor"),
+            ]),
+            Line::from(vec![
+                Span::styled("Shift+W/S", Style::default().bold()),
+                Span::raw(" or "),
+                Span::styled("Shift+↑/↓", Style::default().bold()),
+                Span::raw(" - Page up/down"),
+            ]),
+            Line::from(vec![
+                Span::styled("G", Style::default().bold()),
+                Span::raw(" - Go to address (1-65535)"),
+            ]),
+            Line::raw(""),
+            Line::from("Data Operations:"),
+            Line::from(vec![
+                Span::styled("SPACE", Style::default().bold()),
+                Span::raw(" - Toggle Coils / Edit Holding Registers"),
+            ]),
+            Line::from(vec![
+                Span::styled("ENTER", Style::default().bold()),
+                Span::raw(" - Apply all queued changes"),
+            ]),
+            Line::from(vec![
+                Span::styled("U", Style::default().bold()),
+                Span::raw(" - Revert current cell"),
+            ]),
+            Line::from(vec![
+                Span::styled("R", Style::default().bold()),
+                Span::raw(" - Read current page"),
+            ]),
+            Line::from(vec![
+                Span::styled("Shift+R", Style::default().bold()),
+                Span::raw(" - Toggle auto page refresh"),
+            ]),
+            Line::from(vec![
+                Span::styled("Shift+T", Style::default().bold()),
+                Span::raw(" - Toggle auto tick refresh"),
+            ]),
+        ])
+        .block(
+            Block::new()
+                // .borders(Borders::BOTTOM)
+                .title("Table Navigation & Data"),
+        )
+        .wrap(Wrap { trim: true });
+
+        // Connection Tab Section
+        let connection_help = Paragraph::new(vec![
+            Line::from("When focused on Connection tab (bottom panel):"),
+            Line::from(vec![
+                Span::styled("A/D", Style::default().bold()),
+                Span::raw(" or "),
+                Span::styled("←/→", Style::default().bold()),
+                Span::raw(" - Select connection button"),
+            ]),
+            Line::from(vec![
+                Span::styled("ENTER", Style::default().bold()),
+                Span::raw(" - New Connection or Disconnect"),
+            ]),
+            Line::raw(""),
+            Line::from("In Connection Popup:"),
+            Line::from("• Enter IP address and port"),
+            Line::from("• Use UP/DOWN/TAB to switch fields"),
+        ])
+        .block(
+            Block::new()
+                .borders(Borders::BOTTOM)
+                .title("Connection Controls"),
+        );
+
+        // Queue Tab Section
+        let queue_help = Paragraph::new(vec![
+            Line::from("When focused on Queue tab (bottom panel):"),
+            Line::from(vec![
+                Span::styled("↑/↓", Style::default().bold()),
+                Span::raw(" - Navigate queue items"),
+            ]),
+            Line::from(vec![
+                Span::styled("G", Style::default().bold()),
+                Span::raw(" - Go to selected queue item's address"),
+            ]),
+            Line::from(vec![
+                Span::styled("R", Style::default().bold()),
+                Span::raw(" - Revert selected queue item"),
+            ]),
+            Line::from(vec![
+                Span::styled("M", Style::default().bold()),
+                Span::raw(" - Save queue as macro file"),
+            ]),
+        ])
+        .block(Block::new().title("Queue Controls"));
+
+        let help_hint = Paragraph::new("Press 'Tab' to change pages").centered();
+
+        match self.help_menu_page {
+            0 => {
+                frame.render_widget(general_help, general_area);
+                frame.render_widget(table_help, table_area);
+            }
+            _ => {
+                frame.render_widget(connection_help, connection_area);
+                frame.render_widget(queue_help, queue_area);
+            }
+        }
+        frame.render_widget(help_hint, help_hint_area);
     }
 
     fn render_table(&self, frame: &mut Frame, table_area: Rect) {
@@ -1172,8 +1536,8 @@ impl App {
                                         CellState::Queued => cell.queued_content.to_u16(),
                                     }
                                 ))
-                                    .centered()
-                                    .style(Style::new().fg(Color::White))
+                                .centered()
+                                .style(Style::new().fg(Color::White))
                             }
                             SelectedTopTab::InputRegisters | SelectedTopTab::HoldingRegisters => {
                                 Line::raw(format!(
@@ -1183,8 +1547,8 @@ impl App {
                                         CellState::Queued => cell.queued_content.to_u16(),
                                     }
                                 ))
-                                    .centered()
-                                    .style(Style::new().fg(Color::White))
+                                .centered()
+                                .style(Style::new().fg(Color::White))
                             }
                         };
 
@@ -1200,8 +1564,11 @@ impl App {
                         };
 
                         match cell.state {
-                            CellState::Normal => Cell::from(cell_content).style(Style::new().bg(color)),
-                            CellState::Queued => Cell::from(cell_content).style(Style::new().bg(color).bold().underlined()),
+                            CellState::Normal => {
+                                Cell::from(cell_content).style(Style::new().bg(color))
+                            }
+                            CellState::Queued => Cell::from(cell_content)
+                                .style(Style::new().bg(color).bold().underlined()),
                         }
                     })
                     .collect::<Vec<Cell>>();
@@ -1314,7 +1681,10 @@ impl App {
         frame.render_widget(Clear, area);
 
         let popup_content = Paragraph::new(vec![
-            Line::styled("Error", Style::new()).centered().bold().underlined(),
+            Line::styled("Error", Style::new())
+                .centered()
+                .bold()
+                .underlined(),
             Line::from(vec![
                 Span::raw(" "),
                 Span::styled(message, Style::new().fg(Color::White)),
@@ -1324,6 +1694,96 @@ impl App {
         ])
         .block(Block::bordered())
         .style(Style::new().fg(self.colors.section_selected_fg));
+        frame.render_widget(popup_content, area);
+    }
+
+    fn render_goto_popup(&self, frame: &mut Frame, popup_area: Rect) {
+        let text_style = Style::new()
+            .bg(self.colors.table_normal_cell_bg)
+            .fg(Color::White);
+        let area = centered_rect(32, 4, popup_area);
+        frame.render_widget(Clear, area);
+
+        let popup_content = Paragraph::new(vec![
+            Line::raw(" Seek to an address (1-65535) "),
+            Line::from(vec![
+                Span::styled(&self.edit_popup_input[..self.edit_popup_cursor], text_style),
+                Span::styled(" ".repeat(5 - self.edit_popup_cursor), text_style),
+            ])
+            .centered(),
+        ])
+        .block(Block::bordered())
+        .style(Style::new().fg(self.colors.section_selected_fg));
+        frame.render_widget(popup_content, area);
+    }
+
+    fn render_macro_popup(&self, frame: &mut Frame, popup_area: Rect, popup_mode: SaveMacroMode) {
+        let text_style = Style::new()
+            .bg(self.colors.table_normal_cell_bg)
+            .fg(Color::White);
+        let area;
+        let popup_content;
+
+        let main_message = String::from(" Enter a filename below (extension not required). ");
+        let overwrite_warning_message =
+            String::from(" Warning - File already exists! Overwrite? (Y/N) ");
+        let file_saved_message = String::from(" .magmod file saved to current directory. ");
+        match popup_mode {
+            SaveMacroMode::Main => {
+                area = centered_rect((main_message.len() + 2) as u16, 4, popup_area);
+                frame.render_widget(Clear, area);
+
+                popup_content = Paragraph::new(vec![
+                    Line::from(main_message.clone()),
+                    Line::from(vec![
+                        Span::styled(
+                            self.macro_popup_input
+                                .chars()
+                                .rev()
+                                .take(main_message.len() + 2)
+                                .collect::<Vec<char>>()
+                                .into_iter()
+                                .rev()
+                                .collect::<String>(),
+                            text_style,
+                        ),
+                        Span::styled(
+                            " ".repeat(
+                                (main_message.len() + 2).saturating_sub(self.macro_popup_cursor),
+                            ),
+                            text_style,
+                        ),
+                    ]),
+                ])
+                .block(Block::bordered())
+                .style(Style::new().fg(self.colors.section_selected_fg));
+            }
+            SaveMacroMode::OverwriteWarning => {
+                area = centered_rect((overwrite_warning_message.len() + 2) as u16, 4, popup_area);
+                frame.render_widget(Clear, area);
+
+                popup_content = Paragraph::new(vec![
+                    Line::styled(
+                        "Warning",
+                        Style::new()
+                            .fg(self.colors.section_selected_fg)
+                            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                    )
+                    .centered(),
+                    Line::from(overwrite_warning_message),
+                ])
+                .block(Block::bordered())
+                .style(Style::new().fg(self.colors.section_selected_fg));
+            }
+            SaveMacroMode::FileSaved => {
+                area = centered_rect((file_saved_message.len() + 2) as u16, 3, popup_area);
+                frame.render_widget(Clear, area);
+
+                popup_content = Paragraph::new(vec![Line::from(file_saved_message)])
+                    .block(Block::bordered())
+                    .style(Style::new().fg(self.colors.section_selected_fg));
+            }
+        }
         frame.render_widget(popup_content, area);
     }
 
@@ -1360,6 +1820,12 @@ impl App {
     fn table_go_to_cell(&mut self, cell_address: u16) {
         let table = &mut self.tables[self.selected_top_tab as usize];
         table.go_to_cell(cell_address);
+    }
+
+    fn queue_go_to_cell(&mut self, cell_address: u16, table_index: usize) {
+        let table = &mut self.tables[table_index];
+        self.selected_top_tab = SelectedTopTab::iter().nth(table_index).unwrap();
+        table.go_to_cell(cell_address)
     }
 
     async fn modbus_apply_queued(&mut self) {
@@ -1399,6 +1865,10 @@ impl App {
             let mut table_queued = table.get_queue_items();
             self.queue_table_data.append(&mut table_queued);
         }
+        if self.queue_item_index >= self.queue_table_data.len() && !self.queue_table_data.is_empty()
+        {
+            self.queue_item_index = self.queue_table_data.len() - 1;
+        }
     }
 
     fn queue_select_next_item(&mut self) {
@@ -1430,6 +1900,19 @@ impl App {
 
         self.queue_table_state.select(Some(self.queue_item_index));
         self.queue_scroll_state = self.queue_scroll_state.position(self.queue_item_index);
+    }
+
+    fn queue_revert_item(&mut self) {
+        let item_address = self.queue_table_data[self.queue_item_index].address;
+        let table_index = self.queue_table_data[self.queue_item_index].table_index;
+
+        let table = &mut self.tables[table_index];
+
+        if let Some(item) = table.data.get_mut(&item_address) {
+            item.revert();
+        }
+
+        self.refresh_queue_table();
     }
 
     fn table_get_queued_commands(&self) -> Vec<ModbusWriteCommand> {

@@ -12,8 +12,7 @@
 //!    See the License for the specific language governing permissions and
 //!    limitations under the License.
 
-use crate::app_table::TableCell;
-use crate::enums::{CellType, SelectedTopTab};
+use crate::{app_table::TableCell, enums::CellType};
 
 pub struct QueueItem {
     pub address: u16,
@@ -22,19 +21,6 @@ pub struct QueueItem {
 }
 
 impl QueueItem {
-    pub fn table_name(&self) -> String {
-        self.cell.table_type.to_string()
-    }
-
-    pub fn memory_address(&self) -> String {
-        match self.cell.table_type {
-            SelectedTopTab::Coils => format!("0x0{:04X}", self.address),
-            SelectedTopTab::DiscreteInputs => format!("0x1{:04X}", self.address),
-            SelectedTopTab::InputRegisters => format!("0x3{:04X}", self.address),
-            SelectedTopTab::HoldingRegisters => format!("0x4{:04X}", self.address),
-        }
-    }
-
     pub fn original_content(&self) -> String {
         format!(
             "{:05}",

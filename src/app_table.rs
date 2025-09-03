@@ -12,8 +12,10 @@
 //!    See the License for the specific language governing permissions and
 //!    limitations under the License.
 
-use crate::enums::{Action, CellState, CellType, SelectedTopTab};
-use crate::queue::QueueItem;
+use crate::{
+    enums::{Action, CellState, CellType, SelectedTopTab},
+    queue::QueueItem,
+};
 use ratatui::widgets::TableState;
 use std::collections::HashMap;
 use tokio::sync::mpsc::Sender;
@@ -232,6 +234,7 @@ impl AppTable {
         let (page_offset, row, col) = self.index_to_cell(cell_address as usize);
         self.page_offset = page_offset;
         self.table_state.select_cell(Some((row, col)));
+        self.set_memory_address(cell_address);
     }
 
     pub fn queue_current_cell(&mut self, new_value: CellType) {
