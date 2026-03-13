@@ -25,7 +25,7 @@ Magic Modbus is a CLI tool built with Rust that provides an intuitive terminal i
 ### From Source
 
 ```bash
-git clone https://github.com/yourusername/magic_modbus.git
+git clone https://github.com/doplgamer/magic_modbus.git
 cd magic_modbus
 cargo build --release
 ```
