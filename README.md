@@ -5,6 +5,8 @@
 ![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=for-the-badge)
 
+[Demo](https://github.com/Doplgamer/magic_modbus/blob/main/demo.gif)
+
 ## Overview
 
 Magic Modbus is a CLI tool built with Rust that provides an intuitive terminal interface for interacting with Modbus devices over TCP connections. It features a tabbed interface for viewing and editing different Modbus data types with real-time updates and efficient memory management.
